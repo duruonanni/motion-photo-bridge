@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "motion-photo-bridge"
+version = "0.1.0"
+description = "Turn dual-file live photos (vivo/OPPO style JPG + MP4) into standard Android Motion Photos and wire them into Immich."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "duruonanni" }]
+keywords = ["motion-photo", "live-photo", "immich", "vivo", "android", "jpeg"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+]
+dependencies = [
+  "android-motion-photo-merger @ git+https://github.com/oneone1995/android-motion-photo-merger.git@be3001b14056a53a8594c6bf51e4528d5c3b9a21",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+mpb = "motion_photo_bridge.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["motion_photo_bridge*"]

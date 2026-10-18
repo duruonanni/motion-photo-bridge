@@ -1,0 +1,25 @@
+{
+  "name": "Vivo 动态照片自动关联",
+  "description": "资产入库时,把 vivo 的 mp4 动态片段关联到同名 jpg,并隐藏视频。由 immich_vivo_webhook.py 处理。",
+  "enabled": true,
+  "trigger": "AssetCreate",
+  "steps": [
+    {
+      "method": "immich-plugin-core#assetFileFilter",
+      "config": {
+        "pattern": "\\.mp4$",
+        "matchType": "regex",
+        "caseSensitive": false
+      },
+      "enabled": true
+    },
+    {
+      "method": "immich-plugin-core#webhook",
+      "config": {
+        "url": "http://172.17.0.1:9100/immich/vivo-link",
+        "method": "POST"
+      },
+      "enabled": true
+    }
+  ]
+}
