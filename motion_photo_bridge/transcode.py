@@ -65,8 +65,14 @@ def probe(path: Path) -> VideoInfo:
     )
 
 
-def transcode(src: Path, dst: Path, crf: int = 20) -> VideoInfo:
-    """Re-encode ``src`` to limited-range H.264 and return its new info."""
+def transcode(src: Path, dst: Path, crf: int = 20, creation_time: str | None = None) -> VideoInfo:
+    """Re-encode ``src`` to limited-range H.264 and return its new info.
+
+    ``creation_time`` overrides the timestamp carried into the output.  Some
+    phones ship a clip whose creation time is the transfer time rather than
+    the capture time, which makes pairing against the photo's EXIF fail; the
+    caller can pass the photo's capture time instead.
+    """
     info = probe(src)
     cmd = [
         FFMPEG, "-y", "-loglevel", "error", "-i", str(src),
@@ -80,8 +86,9 @@ def transcode(src: Path, dst: Path, crf: int = 20) -> VideoInfo:
     ]
     # Re-encoding drops the container timestamp, and the merger needs it to
     # pair the clip with the photo.  Carry it across explicitly.
-    if info.creation_time:
-        cmd += ["-metadata", f"creation_time={info.creation_time}"]
+    stamp = creation_time or info.creation_time
+    if stamp:
+        cmd += ["-metadata", f"creation_time={stamp}"]
     cmd.append(str(dst))
     _run(cmd)
     return probe(dst)

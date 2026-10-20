@@ -80,6 +80,14 @@ def main() -> int:
 
     info = tc.probe(vid_file)
     print(f"视频参数: {info.codec} {info.width}x{info.height} {info.pix_fmt}/{info.color_range} {info.duration:.2f}s")
+
+    # 用照片的拍摄时间覆盖视频里的 creation_time:部分 vivo 视频带的是"传输时间"
+    # 而不是拍摄时间,会让合并工具判定为 Ambiguous。
+    exif = psql(f"""SELECT to_char("dateTimeOriginal" AT TIME ZONE 'UTC',
+                           'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+                    FROM asset_exif WHERE "assetId" = '{img_id}';""")
+    photo_time = exif[0][0] if exif and exif[0][0] else None
+    print(f"照片拍摄时间(UTC): {photo_time}  / 视频自带: {info.creation_time}")
     if not info.needs_range_fix:
         print("→ 已经是标准范围,跳过转码")
 
@@ -102,7 +110,7 @@ def main() -> int:
         clip = vid_file
         if info.needs_range_fix:
             clip = work / "transcoded.mp4"
-            tc.transcode(vid_file, clip, crf=args.crf)
+            tc.transcode(vid_file, clip, crf=args.crf, creation_time=photo_time)
             print(f"✅ 已转码 -> {tc.probe(clip).pix_fmt}/{tc.probe(clip).color_range}")
 
         pair_dir = work / "pair"
