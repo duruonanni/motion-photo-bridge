@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 import time
 from pathlib import Path
 
-COMPOSE = Path.home() / "hermes-workspace/projects/immich"
+COMPOSE = Path(os.environ.get("IMMICH_COMPOSE_DIR", Path.home() / "hermes-workspace/projects/immich"))
 SCRIPT = Path(__file__).with_name("apply_pair.py")
 PY = sys.executable
 

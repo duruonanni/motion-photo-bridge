@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
 import subprocess
 import sys
@@ -70,9 +71,20 @@ def convert_one(jpg: Path, clip: Path, out_dir: Path, do_transcode: bool, dry_ru
 
         out_dir.mkdir(parents=True, exist_ok=True)
         proc = subprocess.run(
-            _merger_cmd() + ["convert", str(pair_dir), "--output", str(out_dir), "--include-probable"],
+            _merger_cmd() + ["convert", str(pair_dir), "--output", str(out_dir),
+                             "--include-probable", "--json"],
             capture_output=True, text=True,
         )
+        # The merger exits 0 even when it declines to pair a file (Ambiguous /
+        # Rejected), so the exit code alone cannot be trusted — read its report.
+        try:
+            for entry in json.loads(proc.stdout or "[]"):
+                if str(entry.get("image_path", "")).endswith(jpg.name):
+                    result["status"] = entry.get("status")
+                    if entry.get("reason"):
+                        result["reason"] = entry["reason"]
+        except json.JSONDecodeError:
+            pass
         result["ok"] = proc.returncode == 0
         if not result["ok"]:
             result["error"] = (proc.stderr or proc.stdout).strip()[-400:]
@@ -81,6 +93,9 @@ def convert_one(jpg: Path, clip: Path, out_dir: Path, do_transcode: bool, dry_ru
     if produced.exists():
         result["output"] = str(produced)
         result["output_mb"] = round(produced.stat().st_size / 1_000_000, 2)
+    else:
+        result["ok"] = False
+        result["error"] = f"no output written: {result.get('reason') or result.get('status') or 'unknown'}"
     return result
 
 

@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Motion Photo viewer</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin:0; min-height:100vh; background:#0b0e13; color:#e8ebf0;
+         font:15px/1.6 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+         display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px; padding:28px; }
+  h1 { font-size:18px; font-weight:600; margin:0; }
+  p.sub { margin:0; color:#8b93a1; font-size:13.5px; text-align:center; max-width:560px; }
+  #drop { width:min(420px,90vw); padding:34px 22px; border:1.5px dashed #333c49; border-radius:14px;
+          text-align:center; color:#8b93a1; cursor:pointer; transition:border-color .15s, background .15s; }
+  #drop.hot { border-color:#4c8bf5; background:#4c8bf511; }
+  .stage { position:relative; border-radius:16px; overflow:hidden; box-shadow:0 22px 55px #000a;
+           line-height:0; cursor:pointer; max-width:min(420px,90vw); }
+  .stage img, .stage video { width:340px; max-width:100%; display:block; }
+  .badge { position:absolute; top:10px; left:10px; background:#000000b3; border-radius:999px;
+           padding:4px 11px; font-size:12px; }
+  table { border-collapse:collapse; font-size:13px; color:#c3cad6; }
+  td { padding:2px 14px 2px 0; }
+  td:first-child { color:#8b93a1; }
+  code { background:#151a21; padding:1px 6px; border-radius:4px; font-size:12.5px; }
+  .err { color:#ff8f8f; }
+  input[type=file] { display:none; }
+</style>
+</head>
+<body>
+<h1>Motion Photo viewer</h1>
+<p class="sub">Drop a Motion Photo <code>.jpg</code> here (or click to pick one). Everything runs in
+your browser — the file never leaves your machine, and it works with no server at all.</p>
+
+<div id="drop">drop a <code>.jpg</code> here — or click to choose a file</div>
+<div id="out"></div>
+<input type="file" id="picker" accept=".jpg,.jpeg,image/jpeg">
+
+<script>
+const drop = document.getElementById('drop');
+const out = document.getElementById('out');
+const picker = document.getElementById('picker');
+
+function latin1(bytes) {
+  let s = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return s;
+}
+
+function findMotion(buf) {
+  const u8 = new Uint8Array(buf), dv = new DataView(buf);
+  let i = 2;
+  while (i < u8.length - 4) {
+    if (u8[i] !== 0xff) { i++; continue; }
+    const marker = u8[i + 1];
+    if (marker === 0xda) break;
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd8)) { i += 2; continue; }
+    const segLen = dv.getUint16(i + 2, false);
+    if (marker === 0xe1 && latin1(u8.subarray(i + 4, i + 33)) === 'http://ns.adobe.com/xap/1.0/\u0000') {
+      const text = latin1(u8.subarray(i + 4, i + 2 + segLen));
+      const micro = text.match(/MicroVideoOffset[="\s]*>?\s*(\d+)/);
+      if (micro) {
+        const n = parseInt(micro[1], 10);
+        return { offset: u8.length - n, length: n, spec: 'MicroVideoOffset' };
+      }
+      const itemRe = /<Container:Item\b([^>]*?)\/?>/g;
+      let m;
+      while ((m = itemRe.exec(text))) {
+        const attrs = {}, attrRe = /(\w+):(\w+)="([^"]*)"/g;
+        let a;
+        while ((a = attrRe.exec(m[1]))) attrs[a[2]] = a[3];
+        const len = parseInt(attrs.Length || '0', 10), pad = parseInt(attrs.Padding || '0', 10);
+        if (attrs.Semantic === 'MotionPhoto' && len > 0) {
+          return { offset: u8.length - pad - len, length: len, spec: 'Container:Directory' };
+        }
+      }
+    }
+    i += 2 + segLen;
+  }
+  return null;
+}
+
+function render(file, buf) {
+  const motion = findMotion(buf);
+  out.innerHTML = '';
+  const stage = document.createElement('div');
+  stage.className = 'stage';
+  const url = URL.createObjectURL(new Blob([buf.slice(0, 200000)], { type: 'image/jpeg' }));
+  const img = document.createElement('img');
+  img.src = URL.createObjectURL(file);
+  stage.appendChild(img);
+  const badge = document.createElement('span');
+  badge.className = 'badge';
+  badge.textContent = motion ? 'Motion Photo \u00b7 click to play' : 'no embedded clip';
+  stage.appendChild(badge);
+  out.appendChild(stage);
+
+  const table = document.createElement('table');
+  table.innerHTML =
+    '<tr><td>file</td><td>' + file.name + '</td></tr>' +
+    '<tr><td>size</td><td>' + (file.size / 1048576).toFixed(2) + ' MB</td></tr>' +
+    (motion
+      ? '<tr><td>spec</td><td>' + motion.spec + '</td></tr>' +
+        '<tr><td>clip</td><td>' + (motion.length / 1048576).toFixed(2) + ' MB at offset ' + motion.offset + '</td></tr>'
+      : '<tr><td>result</td><td class="err">this is a plain JPEG \u2014 no video inside</td></tr>');
+  out.appendChild(table);
+  URL.revokeObjectURL(url);
+
+  if (!motion) return;
+  const blobUrl = URL.createObjectURL(new Blob([buf.slice(motion.offset, motion.offset + motion.length)], { type: 'video/mp4' }));
+  let video = null;
+  stage.addEventListener('click', () => {
+    if (video) { video.remove(); video = null; img.style.display = ''; return; }
+    video = document.createElement('video');
+    video.src = blobUrl;
+    video.autoplay = video.loop = video.muted = video.playsInline = true;
+    img.style.display = 'none';
+    stage.appendChild(video);
+  });
+}
+
+async function handle(file) {
+  if (!file) return;
+  out.textContent = 'reading\u2026';
+  try {
+    render(file, await file.arrayBuffer());
+  } catch (err) {
+    out.innerHTML = '<p class="err">' + err + '</p>';
+  }
+}
+
+drop.addEventListener('click', () => picker.click());
+picker.addEventListener('change', () => handle(picker.files[0]));
+['dragenter', 'dragover'].forEach((e) => drop.addEventListener(e, (ev) => {
+  ev.preventDefault(); drop.classList.add('hot');
+}));
+['dragleave', 'drop'].forEach((e) => drop.addEventListener(e, (ev) => {
+  ev.preventDefault(); drop.classList.remove('hot');
+}));
+drop.addEventListener('drop', (ev) => handle(ev.dataTransfer.files[0]));
+window.addEventListener('dragover', (e) => e.preventDefault());
+window.addEventListener('drop', (e) => e.preventDefault());
+</script>
+</body>
+</html>

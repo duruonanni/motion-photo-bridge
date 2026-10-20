@@ -21,12 +21,12 @@ import sys
 import tempfile
 from pathlib import Path
 
-sys.path.insert(0, str(Path.home() / "hermes-workspace/projects/motion-photo-bridge"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from motion_photo_bridge import transcode as tc  # noqa: E402
 
-MEDIA = Path("/mnt/ztb/media/immich")
-BACKUP = Path("/mnt/ztb/immich-backup/vivo-originals")
-COMPOSE = Path.home() / "hermes-workspace/projects/immich"
+MEDIA = Path(os.environ.get("IMMICH_MEDIA_DIR", "/mnt/ztb/media/immich"))
+BACKUP = Path(os.environ.get("MPB_BACKUP_DIR", "/mnt/ztb/immich-backup/vivo-originals"))
+COMPOSE = Path(os.environ.get("IMMICH_COMPOSE_DIR", Path.home() / "hermes-workspace/projects/immich"))
 
 
 def psql(query: str) -> list[list[str]]:
