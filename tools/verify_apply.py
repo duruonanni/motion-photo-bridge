@@ -30,8 +30,8 @@ print(f"图片: {img['originalFileName']}  size={img.get('exifInfo', {}).get('fi
 print(f"       livePhotoVideoId={img.get('livePhotoVideoId')}")
 
 try:
-    req(f"/api/assets/{VID}/video/playback", token=tok)
-    print("视频 playback: 200 OK")
+    data = req(f"/api/assets/{VID}/video/playback", token=tok, raw=True)
+    print(f"视频 playback: OK ({len(data)/1e6:.2f} MB 转码流)")
 except Exception as exc:  # noqa: BLE001
     print(f"视频 playback: {exc}")
 
