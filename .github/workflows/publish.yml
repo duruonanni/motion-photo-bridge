@@ -74,3 +74,20 @@ jobs:
           name: dist
           path: dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
+
+  # The PyPI page is a build-time snapshot of README.md; verify what users see.
+  verify-pypi:
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for PyPI to serve the new description
+        run: |
+          for i in $(seq 1 20); do
+            body=$(curl -fsS https://pypi.org/pypi/motion-photo-bridge/json || true)
+            if [ -n "$body" ] && echo "$body" | python -c "import json,sys; d=json.load(sys.stdin)['info']['description']; sys.exit(0 if 'pip install motion-photo-bridge' in d else 1)"; then
+              echo "PyPI description is current"; exit 0
+            fi
+            echo "attempt $i: still stale, sleeping"; sleep 15
+          done
+          echo "PyPI description still advertises an old install line" >&2
+          exit 1
