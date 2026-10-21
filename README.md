@@ -13,7 +13,7 @@
 ## 30 秒最快路径（只做离线转换）
 
 ```bash
-pip install "git+https://github.com/duruonanni/motion-photo-bridge"   # PyPI 上架前用这条
+pip install motion-photo-bridge
 mpb doctor                                  # 只查 Python + ffmpeg + 内置引擎，不碰 Immich
 mpb scan   ~/Pictures/vivo                  # 看看能配出多少对
 mpb convert ~/Pictures/vivo -o ~/Pictures/fixed --transcode
@@ -126,19 +126,17 @@ JPG + MP4 ──► optional transcode ──► merge ──► one Motion Phot
 ## Install
 
 ```bash
-git clone https://github.com/duruonanni/motion-photo-bridge
-cd motion-photo-bridge
-python3 -m venv .venv && . .venv/bin/activate
-pip install .
+pip install motion-photo-bridge
+# 或者从源码：
+# git clone https://github.com/duruonanni/motion-photo-bridge && cd motion-photo-bridge && pip install .
 ```
 
 The merger is vendored under `motion_photo_bridge/_vendor` (MIT, see
-`NOTICE.md`) — there is no second package to install. Until the project is on
-PyPI, `pip install git+…` still needs `git` on the machine; on a machine without
-git, install the wheel from the release:
+`NOTICE.md`) — there is no second package to install, and the package itself has
+**zero runtime dependencies**:
 
 ```bash
-pip install ./motion_photo_bridge-0.2.1-py3-none-any.whl
+pip install motion-photo-bridge          # PyPI, 0.2.2+
 ```
 
 `ffmpeg` and `ffprobe` must be on `PATH` — `mpb doctor` checks that (and only
