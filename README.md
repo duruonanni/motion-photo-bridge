@@ -4,7 +4,7 @@
 
 ![Motion Photo demo](docs/demo.gif)
 
-*One `.jpg`. Click it and the clip inside plays. (The demo uses a generated clip, not a personal photo.)*
+*One `.jpg`. Click it and the 2.9-second clip inside plays — recorded from a real vivo X100 Ultra live photo.*
 
 ## The problem
 

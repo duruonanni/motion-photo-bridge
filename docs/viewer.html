@@ -15,6 +15,7 @@
   #drop { width:min(420px,90vw); padding:34px 22px; border:1.5px dashed #333c49; border-radius:14px;
           text-align:center; color:#8b93a1; cursor:pointer; transition:border-color .15s, background .15s; }
   #drop.hot { border-color:#4c8bf5; background:#4c8bf511; }
+  #drop.compact { padding:9px 14px; font-size:12.5px; border-style:solid; border-color:#232b35; }
   .stage { position:relative; border-radius:16px; overflow:hidden; box-shadow:0 22px 55px #000a;
            line-height:0; cursor:pointer; max-width:min(420px,90vw); }
   .stage img, .stage video { width:340px; max-width:100%; display:block; }
@@ -84,6 +85,8 @@ function findMotion(buf) {
 function render(file, buf) {
   const motion = findMotion(buf);
   out.innerHTML = '';
+  drop.textContent = 'drop another .jpg to check it, or click to choose a file';
+  drop.classList.add('compact');
   const stage = document.createElement('div');
   stage.className = 'stage';
   const url = URL.createObjectURL(new Blob([buf.slice(0, 200000)], { type: 'image/jpeg' }));

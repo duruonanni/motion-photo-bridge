@@ -1,6 +1,9 @@
-"""Record the Motion Photo demo page and turn it into a README GIF.
+"""Record docs/viewer.html inspecting a real Motion Photo, and turn it into the README GIF.
 
-Serves nothing itself: expects the page at http://127.0.0.1:8898/index.html.
+Drives the page a user actually gets — no server needed, the viewer reads the file
+straight off disk.
+
+    python3 tools/record_demo.py [photo.jpg]
 """
 import asyncio
 import shutil
@@ -8,27 +11,32 @@ import subprocess
 import sys
 from pathlib import Path
 
-REC = Path("/home/duruo/.hermes/cache/scratch/mpb-rec")
-OUT = Path("/home/duruo/hermes-workspace/projects/motion-photo-bridge/docs/demo.gif")
+REPO = Path(__file__).resolve().parents[1]
+VIEWER = REPO / "docs" / "viewer.html"
+OUT = REPO / "docs" / "demo.gif"
+SAMPLE = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("/tmp/demo-out/demo.jpg")
+REC = Path.home() / ".hermes/cache/scratch/mpb-rec"
+
+W, H = 430, 720
 
 
-async def record() -> Path:
+async def record(sample: Path) -> Path:
     from playwright.async_api import async_playwright
 
     shutil.rmtree(REC, ignore_errors=True)
     async with async_playwright() as p:
         browser = await p.chromium.launch()
         ctx = await browser.new_context(
-            viewport={"width": 520, "height": 620},
+            viewport={"width": W, "height": H},
             record_video_dir=str(REC),
-            record_video_size={"width": 520, "height": 620},
+            record_video_size={"width": W, "height": H},
         )
         page = await ctx.new_page()
-        await page.goto("http://127.0.0.1:8898/index.html")
-        await page.wait_for_function("window.__ready === true", timeout=30000)
-        await page.wait_for_timeout(1200)
-        await page.click("#stage")
-        await page.wait_for_timeout(2800)
+        await page.goto(VIEWER.as_uri())
+        await page.set_input_files("#picker", str(sample))
+        await page.wait_for_timeout(1000)
+        await page.click(".stage")
+        await page.wait_for_timeout(2600)
         await ctx.close()
         await browser.close()
     return next(REC.glob("*.webm"))
@@ -36,7 +44,8 @@ async def record() -> Path:
 
 def to_gif(webm: Path) -> None:
     OUT.parent.mkdir(parents=True, exist_ok=True)
-    vf = "fps=11,scale=400:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=96[p];[b][p]paletteuse=dither=bayer"
+    vf = ("fps=10,scale=380:-1:flags=lanczos,split[a][b];"
+          "[a]palettegen=max_colors=96[p];[b][p]paletteuse=dither=bayer")
     subprocess.run(
         ["ffmpeg", "-y", "-loglevel", "error", "-i", str(webm), "-vf", vf, "-loop", "0", str(OUT)],
         check=True,
@@ -44,7 +53,7 @@ def to_gif(webm: Path) -> None:
 
 
 if __name__ == "__main__":
-    src = asyncio.run(record())
-    to_gif(src)
+    if not SAMPLE.exists():
+        raise SystemExit(f"sample not found: {SAMPLE}")
+    to_gif(asyncio.run(record(SAMPLE)))
     print(f"{OUT}  {OUT.stat().st_size / 1e6:.2f} MB")
-    sys.exit(0)
