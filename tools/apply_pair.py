@@ -23,6 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from motion_photo_bridge import transcode as tc  # noqa: E402
+from motion_photo_bridge import vivo  # noqa: E402
 
 MEDIA = Path(os.environ.get("IMMICH_MEDIA_DIR", "/mnt/ztb/media/immich"))
 BACKUP = Path(os.environ.get("MPB_BACKUP_DIR", "/mnt/ztb/immich-backup/vivo-originals"))
@@ -58,6 +59,30 @@ def atomic_copy(src: Path, dst: Path) -> None:
     os.replace(tmp, dst)
 
 
+def back_up(stem: str, img_id: str, img_file: Path, img_name: str,
+            vid_file: Path, backup_clip: str, create: bool = True) -> Path:
+    """Pick a backup directory and create it.
+
+    Two accounts can hold two different photos with the same filename, so a
+    plain ``BACKUP/<stem>`` would silently overwrite the first one.  When the
+    stem is taken by different bytes, fall back to ``<stem>__<asset-id>``.
+    """
+    preferred = BACKUP / stem
+    pick = preferred
+    if preferred.exists():
+        same = True
+        for source, name in ((img_file, img_name), (vid_file, backup_clip)):
+            target = preferred / name
+            if target.exists() and sha1_hex(target) != sha1_hex(source):
+                same = False
+                break
+        if not same:
+            pick = BACKUP / f"{stem}__{img_id[:8]}"
+    if create:
+        pick.mkdir(parents=True, exist_ok=True)
+    return pick
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--image-id", required=True)
@@ -81,6 +106,14 @@ def main() -> int:
     info = tc.probe(vid_file)
     print(f"视频参数: {info.codec} {info.width}x{info.height} {info.pix_fmt}/{info.color_range} {info.duration:.2f}s")
 
+    # 配对闸门:vivo 的私有 livephoto id 是权威依据。两个文件都带 id 却不一致,
+    # 说明这一对是靠文件名猜的(相册改名/同秒连拍都会踩到),宁可中止也别合并错。
+    img_id_tag = vivo.live_photo_id(img_file)
+    vid_id_tag = vivo.live_photo_id(vid_file)
+    print(f"私有 ID: 图片={img_id_tag} 视频={vid_id_tag}")
+    if img_id_tag and vid_id_tag and img_id_tag != vid_id_tag:
+        raise SystemExit(f"ID 不一致,拒绝合并(图片 {img_id_tag} != 视频 {vid_id_tag})")
+
     # 用照片的拍摄时间覆盖视频里的 creation_time:部分 vivo 视频带的是"传输时间"
     # 而不是拍摄时间,会让合并工具判定为 Ambiguous。
     exif = psql(f"""SELECT to_char("dateTimeOriginal" AT TIME ZONE 'UTC',
@@ -92,17 +125,20 @@ def main() -> int:
         print("→ 已经是标准范围,跳过转码")
 
     stem = Path(img_name).stem
-    vid_name = stem + Path(vid_path).suffix
-    backup_dir = BACKUP / stem
+    # 一律以 .mp4 落盘:合并工具只认 .mp4,而源可能是 .MOV(Apple 形态)或相册改名后的名字
+    vid_name = stem + ".mp4"
+    # 备份保留原始扩展名(.MOV 就存 .MOV),合并用的落盘名才是 .mp4
+    backup_clip = stem + Path(vid_path).suffix
+    backup_dir = back_up(stem, img_id, img_file, img_name, vid_file, backup_clip,
+                         create=not args.dry_run)
     print(f"备份目录: {backup_dir}")
 
     if args.dry_run:
         print("\n[dry-run] 将执行: 备份 → 转码 → 合并 → 替换原图 → 视频移到 encoded-video → 更新 DB")
         return 0
 
-    backup_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(img_file, backup_dir / img_name)
-    shutil.copy2(vid_file, backup_dir / vid_name)
+    shutil.copy2(vid_file, backup_dir / backup_clip)
     print(f"✅ 已备份原始文件到 {backup_dir}")
 
     with tempfile.TemporaryDirectory(prefix="mpb-apply-") as td:

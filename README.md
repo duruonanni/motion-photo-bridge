@@ -1,10 +1,70 @@
 # motion-photo-bridge
 
+**vivo / iQOO 手机拍的动态照片，在 Immich 里会变成「一张照片 + 一个小视频」两个文件。这个工具把它们补成标准的单文件动态照片 —— 包括已经进库的照片。**
+
 **Live photos from vivo / iQOO phones don't work in Immich. This fixes that — including the photos already in your library.**
 
 ![Motion Photo demo](docs/demo.gif)
 
 *One `.jpg`. Click it and the 2.9-second clip inside plays — recorded from a real vivo X100 Ultra live photo.*
+
+---
+
+## 中文说明（先看这个）
+
+### 问题出在哪
+
+vivo / iQOO 的动态照片落盘是**两个独立文件**：同名的 `IMG_xxx.jpg` + `IMG_xxx.mp4`。两者之间
+没有标准元数据，只有各自身尾部一段 vivo 私有 JSON 里的同一个 ID
+（`com.android.camera.livephoto`）—— Immich 只认 Apple 的 `ContentIdentifier` 和 Google 的
+`Camera:MotionPhoto`，所以这段私有 ID 它根本不看。结果就是时间线里多出一个孤立小视频，下载给两个
+文件；Windows 上那小段视频还常常**黑屏只剩声音**（vivo 录的是全范围 `yuvj420p`，硬件解码器拒播）。
+
+### 它做什么
+
+```
+JPG + MP4 ──► 可选转码 ──► 合并 ──► 一个标准 Motion Photo JPEG
+                                    （像素与 EXIF 逐字节原样）
+```
+
+1. **配对** —— 优先用 vivo 私有 ID（相册另存/改名也不怕），没有 ID 时退回「同名 + 同目录 + 片段 ≤ 10 秒」。
+2. **转码**（可选）—— 全范围片段重编码成 limited-range H.264/BT.709，修掉 Windows 黑屏。
+3. **合并** —— 把片段追加到 JPEG 尾部并写入 `Container:Directory` XMP，成为标准动态照片。
+4. **关联** —— Immich 里给图片写 `livePhotoVideoId`、隐藏那个小视频，和 Immich 自己处理 iPhone 动态照片的做法一致。
+
+### 三种用法
+
+| 场景 | 命令 |
+| --- | --- |
+| 照片还在电脑上，入库前处理 | `mpb convert ~/Pictures/phone -o ~/Pictures/fixed --transcode` |
+| 已经进了 Immich，不想重传 | `python3 tools/apply_pair.py --image-id <uuid>`（单张）/ `tools/apply_batch.py --owner <邮箱>`（全库，可续跑） |
+| 想全自动 | 上传即关联（Immich workflow + `mpb serve`），定时再自动合并（`tools/auto_merge.py`，每 6 小时） |
+
+**已入库的照片不用重传**：原地替换图片文件，资产 ID、相册、标签、收藏、拍摄时间全部保留；每对
+先备份到独立目录，可中断、可续跑，回滚就是把备份拷回去。
+
+### 哪些 vivo 机型真的需要它
+
+同是 vivo，出片格式按机型分两代：
+
+| 机型 | 落盘形态 | 需要本工具吗 |
+| --- | --- | --- |
+| **X300 / X300 Pro**（2025-10 起）、X300 Ultra、X300s、X500 系列 | 标准单文件 Motion Photo（JPEG + 追加 MP4 + 标准 XMP），Immich 原生识别 | 不需要 |
+| **X100 / X200 系列**（含 X100 Ultra、X200 Pro Mini）及更早 | 同名 `JPG` + `MP4` 两个文件，靠私有 ID 配对 | **需要** |
+
+新机型只是把私有 JSON 保留成「双尾」（MP4 `ftyp` 前一份、文件末尾一份），正文已经是标准结构。
+
+固件升级不会回填：X200 系列在 OriginOS 6 上仍复现双文件。所以老机型想要「拍照即单文件」，只能靠
+入库后自动合并 —— 效果等同于新机型出片，区别是手机上那两份原件还在。
+
+### 验证过什么
+
+- ~1000 对真实 vivo X100 Ultra 动态照片（跨两个账号）走完整流程。
+- 合并后的 JPEG：像素解码哈希与原件**完全一致**，内嵌片段可被 `ffprobe` 正常读出（H.264 + AAC）。
+- 配对：把其中一半 `mp4` 改名成 `gallery-renamed-13.mp4` 后，仍按私有 ID 全部正确配上。
+- Immich 端：图片 `livePhotoVideoId` 已写、视频 `hidden`、视频挪进 `encoded-video/`，下载只给一个文件。
+
+---
 
 ## The problem
 
@@ -25,12 +85,15 @@ The same shape (a `JPG` and a same-stem `MP4`) shows up on some OPPO / realme bu
 
 ## What this does
 
+
 ```
 JPG + MP4 ──► optional transcode ──► merge ──► one Motion Photo JPEG
                                                (pixels + EXIF copied byte-for-byte)
 ```
 
-1. **Pair** — same folder, same filename stem, clip ≤ 10 s.
+1. **Pair** — by vivo's private `livephoto` id when both files carry one, otherwise by
+   same folder + same filename stem with a clip ≤ 10 s. The id survives a gallery re-save; the
+   filename does not.
 2. **Transcode** (optional) — re-encode full-range clips to limited-range 4:2:0 BT.709 so Windows
    browsers and the Photos app play them instead of showing black. Clean clips are skipped.
 3. **Merge** — append the clip to the JPEG and write the `Container:Directory` XMP block.
@@ -87,6 +150,9 @@ Per pair it:
    video", so downloads skip it;
 5. updates `checksum`, `originalPath`, `duration` and `fileSizeInByte` to match the new file.
 
+It refuses to merge when both files carry a private id and the ids **disagree** — that pair was
+matched on filenames alone, and merging it would attach the wrong clip.
+
 It is **idempotent and resumable**: a pair whose clip already lives under `encoded-video/` is
 skipped, so you can stop and restart freely. Every pair is backed up first, and rolling back means
 copying the backup over the file again.
@@ -106,8 +172,10 @@ there.
 
 ## Keep it automatic
 
-Immich has no third-party plugin loader yet, but since **v3.0** it ships workflows with a webhook
-action, and that is the supported extension point:
+Two layers, both optional and independent:
+
+**1. Link on upload** (seconds). Immich has no third-party plugin loader yet, but since **v3.0** it
+ships workflows with a webhook action, and that is the supported extension point:
 
 ```
 phone uploads JPG + MP4
@@ -122,27 +190,38 @@ Immich ── Workflow (AssetCreate, filename matches \.mp4$) ──► POST
                                                   API; Immich then hides the clip)
 ```
 
-1. Run the receiver:
+```bash
+mpb serve --port 9100
+```
 
-   ```bash
-   mpb serve --port 9100
-   ```
-
-   It needs an Immich API key for the account that owns the photos (`asset.read` +
-   `asset.update`) in `API_KEY`, and `IMMICH_URL` pointing at your instance.
-
-2. From that same account, paste [`docs/immich-workflow.json`](docs/immich-workflow.json) into
-   **Utilities → Workflows** and point its `url` somewhere Immich can reach — on a Docker bridge
-   network that is usually `http://172.17.0.1:9100/…`.
-
-3. Take a live photo. Within seconds the timeline shows one picture with a motion button, and the
-   loose clip is gone.
+It needs an Immich API key for the account that owns the photos (`asset.read` +
+`asset.update`) in `API_KEY`, and `IMMICH_URL` pointing at your instance. Then, from that same
+account, paste [`docs/immich-workflow.json`](docs/immich-workflow.json) into
+**Utilities → Workflows** and point its `url` somewhere Immich can reach — on a Docker bridge
+network that is usually `http://172.17.0.1:9100/…`.
 
 > Workflows are scoped to their owner: create it with the account that uploads the photos, not as
 > an admin acting on someone else's behalf.
 
-If a clip arrives before its photo the receiver reports `defer`; the next upload or a periodic
-sweep picks it up.
+**2. Link + merge on a timer** (minutes, every 6 h). The webhook can only link: merging rewrites
+the stored file, which is not something to do inside an upload event. `tools/auto_merge.py` does
+both stages, is idempotent, and prints nothing when there is no work:
+
+```bash
+python3 tools/auto_merge.py --dry-run          # what is pending
+python3 tools/auto_merge.py                    # link (id-first) + merge, all owners with vivo photos
+python3 tools/auto_merge.py --owner you@example.com --limit 10
+```
+
+Run it from cron:
+
+```cron
+0 */6 * * *  cd ~/motion-photo-bridge && .venv/bin/python tools/auto_merge.py --quiet
+```
+
+Apple-style `JPG + MOV` pairs (`still-image-time`, `com.apple.quicktime.content.identifier`) are
+linked but **not** merged — they are already a coherent live photo, and merging gains nothing.
+Pass `--include-mov` if you want them turned into single files anyway.
 
 Test the whole chain:
 
@@ -174,6 +253,7 @@ edited live photo and rewrites the file name, the mtime and the clip's `creation
 *export* moment, while keeping the original `DateTimeOriginal`. **Trust EXIF, not the file name:**
 one such photo is named `IMG_20261005_000310` but its EXIF says `2026-10-04 14:09:23` — three
 seconds after `IMG_20261004_140920`, while the minute its name claims contains no photos at all.
+This is also why pairing prefers the private id over the filename.
 
 **Windows plays a black frame (audio only).** The clip is full-range `yuvj420p` and Windows hardware
 decoding chokes on it. `mpb convert --transcode` re-encodes it:
@@ -194,28 +274,14 @@ pair a file, so the CLI verifies the artefact and reports the merger's own reaso
 
 ## Scope and limits
 
-- Only same-stem pairs with a clip of ≤ 10 s are touched. Anything else is reported and skipped.
+- Pairs are only touched when the clip is ≤ 10 s (or carries the same private id as the photo).
+  Anything else is reported and skipped.
 - Original files are never deleted — `convert` writes new files, and the library mode keeps a backup.
-- JPEG pixels and the entire EXIF segment are copied unchanged (verified by hashing the segment
-  before and after: identical).
-- Verified against ~880 pairs from a vivo X100 Ultra.
+- JPEG pixels and the entire EXIF segment are copied unchanged (checked by hashing the decoded
+  pixels before and after: identical).
+- Verified against ~1000 pairs from a vivo X100 Ultra, across two Immich accounts.
 - No Immich source changes. This talks to the official API and to workflows, so your instance stays
   a stock Immich — including across upgrades.
-
-## 中文说明（简要）
-
-vivo / iQOO 的动态照片是**两个独立文件**（同名的 `.jpg` + `.mp4`），Immich 认不出来，时间线里会
-变成"一张照片 + 一个小视频"，下载也是两个文件；Windows 上那小段视频还常常黑屏（vivo 录的是全
-范围 `yuvj420p`）。
-
-这个工具做三件事：把两者**合并成一个标准动态照片 JPEG**、**可选转码**修掉黑屏、并在 Immich 里
-**建立关联并隐藏那个小视频**（和 Immich 对待 iPhone 动态照片的做法一致）。
-
-**照片已经进库了也不用重传**：`tools/apply_pair.py` / `tools/apply_batch.py` 原地替换图片文件，
-资产 ID、相册、标签、收藏、时间全部保留；每对先备份，可中断、可续跑。
-
-想先看效果：把合成后的 jpg 拖进 [`docs/viewer.html`](docs/viewer.html) 就能播放里面的小视频
-（纯本地，不上传）。批量处理用命令行的 `mpb scan` / `mpb convert`。
 
 ## Credits
 

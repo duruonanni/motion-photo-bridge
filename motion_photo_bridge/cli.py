@@ -11,6 +11,7 @@ import tempfile
 from pathlib import Path
 
 from . import transcode as tc
+from . import vivo
 
 IMAGE_EXT = {".jpg", ".jpeg"}
 VIDEO_EXT = {".mp4"}
@@ -18,18 +19,61 @@ MAX_MOTION_SECONDS = 10.0
 
 
 def find_pairs(root: Path) -> list[tuple[Path, Path]]:
-    """Return (image, clip) pairs that share a filename stem."""
-    images: dict[str, Path] = {}
-    videos: dict[str, Path] = {}
+    """Return (image, clip) pairs.
+
+    Pairing is authoritative on vivo's private ``livephoto`` id when both files
+    carry one, and falls back to the filename stem otherwise.  Filenames are a
+    weaker signal: the gallery app renames pairs when it re-saves them.
+    """
+    images: list[Path] = []
+    videos: list[Path] = []
     for path in sorted(root.rglob("*")):
         if not path.is_file():
             continue
         ext = path.suffix.lower()
         if ext in IMAGE_EXT:
-            images[path.stem.lower()] = path
+            images.append(path)
         elif ext in VIDEO_EXT:
-            videos[path.stem.lower()] = path
-    return [(images[k], videos[k]) for k in sorted(images.keys() & videos.keys())]
+            videos.append(path)
+
+    pairs: list[tuple[Path, Path]] = []
+    used_images: set[Path] = set()
+    used_videos: set[Path] = set()
+
+    # Pass 1: private id, the only link that survives a rename.
+    by_id: dict[str, Path] = {}
+    for image in images:
+        ident = vivo.live_photo_id(image)
+        if ident:
+            by_id.setdefault(ident, image)
+    for video in videos:
+        ident = vivo.live_photo_id(video)
+        if not ident:
+            continue
+        image = by_id.get(ident)
+        if image is None or image in used_images:
+            continue
+        pairs.append((image, video))
+        used_images.add(image)
+        used_videos.add(video)
+
+    # Pass 2: same stem, for files that carry no private metadata.
+    images_by_stem: dict[str, Path] = {}
+    for image in images:
+        if image not in used_images:
+            images_by_stem.setdefault(image.stem.lower(), image)
+    for video in videos:
+        if video in used_videos:
+            continue
+        image = images_by_stem.get(video.stem.lower())
+        if image is None or image in used_images:
+            continue
+        pairs.append((image, video))
+        used_images.add(image)
+        used_videos.add(video)
+
+    return sorted(pairs, key=lambda pair: pair[0].name.lower())
+
 
 
 def _merger_cmd() -> list[str]:
@@ -67,7 +111,10 @@ def convert_one(jpg: Path, clip: Path, out_dir: Path, do_transcode: bool, dry_ru
         pair_dir = work / "pair"
         pair_dir.mkdir()
         shutil.copy2(jpg, pair_dir / jpg.name)
-        shutil.copy2(staged_clip, pair_dir / clip.name)
+        # The merger finds clips by "same directory, same stem" and only looks
+        # for .mp4.  A gallery rename or a .MOV source would break that, so the
+        # clip is always staged under the image's stem with an .mp4 suffix.
+        shutil.copy2(staged_clip, pair_dir / (jpg.stem + ".mp4"))
 
         out_dir.mkdir(parents=True, exist_ok=True)
         proc = subprocess.run(
