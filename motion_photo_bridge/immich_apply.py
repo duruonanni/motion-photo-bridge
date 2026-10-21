@@ -186,14 +186,16 @@ def main(argv: list[str] | None = None) -> int:
 
         # 6) 更新 DB —— 四条写库合成一个事务:中途失败不会留下"文件已改、库未改"
         new_duration = int(round(tc.probe(clip).duration * 1000))
+        # 关键:不改 checksum。Immich 手机端用「本地文件 SHA1 == 服务器 checksum」
+        # 判断"是否已备份",改了它手机会认为这些文件从没传过,下次同步重传原图。
+        # 保留原始 checksum 的代价:Immich 的 Integrity → checksum files 会把这批
+        # 资产列为 ChecksumFail(只是报告,不删不改)。
         psql(f"""BEGIN;
-                 UPDATE asset SET checksum=decode('{sha1_hex(img_file)}','hex'),
-                        "updateId"=immich_uuid_v7(), "updatedAt"=now()
+                 UPDATE asset SET "updateId"=immich_uuid_v7(), "updatedAt"=now()
                  WHERE id='{img_id}';
                  UPDATE asset_exif SET "fileSizeInByte"={img_file.stat().st_size}
                  WHERE "assetId"='{img_id}';
                  UPDATE asset SET "originalPath"='{enc_container}',
-                        checksum=decode('{sha1_hex(enc_file)}','hex'),
                         duration={new_duration},
                         visibility='hidden',
                         "updateId"=immich_uuid_v7(), "updatedAt"=now()

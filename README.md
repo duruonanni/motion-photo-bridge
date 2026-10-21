@@ -80,6 +80,15 @@ JPG + MP4 ──► 可选转码 ──► 合并 ──► 一个标准 Motion 
 固件升级不会回填：X200 系列在 OriginOS 6 上仍复现双文件。所以老机型想要「拍照即单文件」，只能靠
 入库后自动合并 —— 效果等同于新机型出片，区别是手机上那两份原件还在。
 
+### 一个必须知道的副作用
+
+合并会改写文件字节，但工具**故意保留原始的 checksum**——因为 Immich 手机端是靠「本地文件 SHA1 == 服务器
+checksum」判断"是否已备份"的（`backup.repository.dart`），改了它，手机就会认为这些照片从没上传过，
+每次同步都把原图重传一遍。
+
+代价是：Immich 后台的 **完整性检查 → checksum files** 会把这些资产列成 `ChecksumFail`。那只是一份
+报告，不会删文件、不会改资产、不影响播放和下载。可以忽略，或者只关掉这一项检查。
+
 ### 验证过什么
 
 - ~1000 对真实 vivo X100 Ultra 动态照片（跨两个账号）走完整流程。
@@ -293,6 +302,16 @@ edited live photo and rewrites the file name, the mtime and the clip's `creation
 one such photo is named `IMG_20261005_000310` but its EXIF says `2026-10-04 14:09:23` — three
 seconds after `IMG_20261004_140920`, while the minute its name claims contains no photos at all.
 This is also why pairing prefers the private id over the filename.
+
+**After merging, the phone re-uploads the original JPG + MP4.** Immich's mobile app decides
+"already backed up" by comparing the local file's SHA1 against `asset.checksum` on the server
+(`backup.repository.dart`: `remoteAssetEntity.checksum.equalsExp(localAsset.checksum)`). Merging
+rewrites the file, so **this tool keeps the original checksum on purpose** — otherwise every sync
+sees the originals as new and uploads them again.
+
+Consequence, by design: Immich's **Integrity → checksum files** report will list those assets as
+`ChecksumFail` (byte hash no longer matches the recorded one). It is only a report — nothing is
+deleted, moved or blocked. Ignore it, or turn that one check off if the noise bothers you.
 
 **Windows plays a black frame (audio only).** The clip is full-range `yuvj420p` and Windows hardware
 decoding chokes on it. `mpb convert --transcode` re-encodes it:
