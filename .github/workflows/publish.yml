@@ -1,0 +1,49 @@
+name: publish
+
+# Publishes to PyPI via Trusted Publishing (OIDC) — no API token, no secret.
+# Requires a one-time setup on PyPI (see README "发布到 PyPI"): either a
+# "pending publisher" (first release, project does not exist yet) or a
+# "trusted publisher" on the existing project, with exactly these values:
+#   owner: duruonanni   repo: motion-photo-bridge
+#   workflow: publish.yml      environment: pypi
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build sdist + wheel
+        run: |
+          python -m pip install --upgrade build
+          python -m build
+          python -m pip install --upgrade twine
+          twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/motion-photo-bridge
+    permissions:
+      id-token: write # OIDC token for Trusted Publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
