@@ -10,6 +10,20 @@
 
 ---
 
+## 30 秒最快路径（只做离线转换）
+
+```bash
+pip install "motion-photo-bridge"           # 或 git clone 后 pip install .
+mpb doctor                                  # 检查 ffmpeg / 依赖 / 环境
+mpb scan   ~/Pictures/vivo                  # 看看能配出多少对
+mpb convert ~/Pictures/vivo -o ~/Pictures/fixed --transcode
+```
+
+三条命令就够。不用装 Immich、不用 Python 环境以外的任何东西（ffmpeg 除外）。
+**照片来自网盘同步盘、或从手机相册手工拷贝出来，也可以直接跑** —— 见下面「不同来源都能用」。
+
+---
+
 ## 中文说明（先看这个）
 
 ### 问题出在哪
@@ -32,13 +46,22 @@ JPG + MP4 ──► 可选转码 ──► 合并 ──► 一个标准 Motion 
 3. **合并** —— 把片段追加到 JPEG 尾部并写入 `Container:Directory` XMP，成为标准动态照片。
 4. **关联** —— Immich 里给图片写 `livePhotoVideoId`、隐藏那个小视频，和 Immich 自己处理 iPhone 动态照片的做法一致。
 
+### 不同来源都能用
+
+| 来源 | 会遇到什么 | 工具怎么处理 |
+| --- | --- | --- |
+| 手机 DCIM 原样拷出 | 正常双文件 | 直接配对合并 |
+| 网盘同步目录（OneDrive/坚果云/NAS） | `Thumbs.db`、`._xxx.jpg`、`@eaDir/`、`.crdownload` 半成品、`IMG_1 (1).jpg` 副本 | 自动跳过垃圾与半成品；副本与原图同组时**优先原始文件名**；可递归子目录并保持目录结构 |
+| 从相册「另存/导出」再拷出来 | 文件名被改（`DSC_0001 copy.jpg`）、剪辑丢了拍摄时间（报「缺少可比较的拍摄时间」） | 先按 vivo 私有 ID 认人（改名也能配上）；ID 没了就读 JPEG 的 EXIF，把拍摄时间补到剪辑上再合并 |
+| 只想要 .MOV（Apple 形态） | 默认不处理 | `--include-mov` |
+
 ### 三种用法
 
 | 场景 | 命令 |
 | --- | --- |
 | 照片还在电脑上，入库前处理 | `mpb convert ~/Pictures/phone -o ~/Pictures/fixed --transcode` |
-| 已经进了 Immich，不想重传 | `python3 tools/apply_pair.py --image-id <uuid>`（单张）/ `tools/apply_batch.py --owner <邮箱>`（全库，可续跑） |
-| 想全自动 | 上传即关联（Immich workflow + `mpb serve`），定时再自动合并（`tools/auto_merge.py`，每 6 小时） |
+| 已经进了 Immich，不想重传 | `mpb apply-pair --image-id <uuid>`（单张）/ `mpb apply-batch --owner <邮箱>`（全库，可续跑） |
+| 想全自动 | 上传即关联（Immich workflow + `mpb serve`），定时再自动合并（`mpb auto-merge`，每 6 小时） |
 
 **已入库的照片不用重传**：原地替换图片文件，资产 ID、相册、标签、收藏、拍摄时间全部保留；每对
 先备份到独立目录，可中断、可续跑，回滚就是把备份拷回去。
@@ -106,10 +129,12 @@ JPG + MP4 ──► optional transcode ──► merge ──► one Motion Phot
 git clone https://github.com/duruonanni/motion-photo-bridge
 cd motion-photo-bridge
 python3 -m venv .venv && . .venv/bin/activate
-pip install -e .
+pip install .
 ```
 
-`ffmpeg` and `ffprobe` must be on `PATH`.
+No git dependency and no extra services: the merger is vendored under
+`motion_photo_bridge/_vendor` (MIT, see `NOTICE.md`), so `pip install` only needs
+PyPI. `ffmpeg` and `ffprobe` must be on `PATH` — `mpb doctor` checks that.
 
 ## Inspect a file, offline
 
@@ -133,12 +158,12 @@ delete and re-upload — asset IDs, albums, tags, favourites and dates all survi
 
 ```bash
 # one pair
-python3 tools/apply_pair.py --image-id <asset-uuid> --dry-run
-python3 tools/apply_pair.py --image-id <asset-uuid>
+mpb apply-pair --image-id <asset-uuid> --dry-run
+mpb apply-pair --image-id <asset-uuid>
 
 # the whole library, resumable
-python3 tools/apply_batch.py --owner you@example.com --dry-run
-python3 tools/apply_batch.py --owner you@example.com
+mpb apply-batch --owner you@example.com --dry-run
+mpb apply-batch --owner you@example.com
 ```
 
 Per pair it:

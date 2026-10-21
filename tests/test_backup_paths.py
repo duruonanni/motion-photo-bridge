@@ -10,11 +10,9 @@ sys.path.insert(0, str(REPO))
 
 
 def load_apply_pair():
-    spec = importlib.util.spec_from_file_location("apply_pair", REPO / "tools" / "apply_pair.py")
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader
-    spec.loader.exec_module(module)
-    return module
+    from motion_photo_bridge import immich_apply
+
+    return immich_apply
 
 
 def test_same_stem_with_different_bytes_gets_its_own_dir(tmp_path: Path) -> None:

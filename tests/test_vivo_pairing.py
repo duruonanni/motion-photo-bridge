@@ -9,7 +9,12 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
 from motion_photo_bridge import vivo  # noqa: E402
-from motion_photo_bridge.cli import find_pairs  # noqa: E402
+from motion_photo_bridge import pairing  # noqa: E402
+
+
+def find_pairs(root):
+    pairs, _skipped = pairing.find_pairs(root)
+    return [(p.image, p.clip) for p in pairs]
 
 MAGIC = bytes([255, 255, 255, 255, 27, 42, 57, 72, 87, 102, 117, 132, 147, 162, 179])
 
