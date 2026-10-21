@@ -7,6 +7,23 @@
 - Never install new runtime dependencies: the package is stdlib-only on purpose and the
   merger under `motion_photo_bridge/_vendor/` is third-party code — do not edit it.
 
+## Hard rule: the running instance is the repo
+
+Before any commit or release, the change must run **on this machine, from this
+checkout** — `pip install -e .`, `mpb …`, the systemd webhook, and the cron job
+all point at this folder and this `.venv`. Never run a copy of the code from
+another directory, never use the system `python3`, and never leave a service
+pointing at a frozen snapshot.
+
+Check before committing:
+
+```bash
+git rev-parse --short HEAD origin/main      # same commit
+.venv/bin/pip show motion-photo-bridge      # Version matches pyproject
+systemctl --user show -p ExecStart immich-vivo-webhook   # .venv/bin/mpb
+.venv/bin/python -m pytest -q tests && .venv/bin/mpb convert docs/sample -o /tmp/mpb-check --transcode
+```
+
 ## Do not
 
 - Do not `git commit`, `git push`, tag or publish. The parent agent reviews your diff and commits.
