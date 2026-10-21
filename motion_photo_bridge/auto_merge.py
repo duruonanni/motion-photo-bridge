@@ -25,10 +25,11 @@ import sys
 import time
 from pathlib import Path
 
+from . import sql
 from . import vivo  # noqa: E402
 
-COMPOSE = Path(os.environ.get("IMMICH_COMPOSE_DIR", Path.home() / "hermes-workspace/projects/immich"))
-MEDIA = Path(os.environ.get("IMMICH_MEDIA_DIR", "/mnt/ztb/media/immich"))
+COMPOSE = Path(os.environ["IMMICH_COMPOSE_DIR"]) if os.environ.get("IMMICH_COMPOSE_DIR") else None
+MEDIA = Path(os.environ["IMMICH_MEDIA_DIR"]) if os.environ.get("IMMICH_MEDIA_DIR") else None
 OWNER = os.environ.get("VIVO_OWNER_EMAIL", "")  # empty = every owner that has vivo photos
 MAX_MOTION_MS = 10_000
 ID_WINDOW_SECONDS = 86_400
@@ -37,6 +38,8 @@ APPLY_MODULE = "motion_photo_bridge.immich_apply"
 
 
 def psql(query: str) -> list[list[str]]:
+    if COMPOSE is None:
+        raise SystemExit("set IMMICH_COMPOSE_DIR (folder with docker-compose.yml) first")
     proc = subprocess.run(
         ["docker", "compose", "exec", "-T", "database", "psql", "-U", "postgres",
          "immich", "-t", "-A", "-F", "|", "-c", query],
@@ -57,11 +60,13 @@ def update_count(rows: list[list[str]], tag: str) -> int:
 
 
 def host_path(container_path: str) -> Path:
+    if MEDIA is None:
+        raise SystemExit("set IMMICH_MEDIA_DIR to the host path of Immich's upload folder")
     return MEDIA / Path(container_path).relative_to("/data")
 
 
 def sql_owners(owners: list[str]) -> str:
-    quoted = ",".join("'" + email.replace("'", "''") + "'" for email in owners)
+    quoted = ",".join(sql.lit(sql.email(email)) for email in owners)
     return f"({quoted})"
 
 
@@ -79,14 +84,17 @@ def link_by_stem(owners: list[str]) -> int:
     sql = f"""
     WITH u AS (SELECT id FROM "user" WHERE email IN {sql_owners(owners)}),
     vids AS (SELECT a.id, a.duration,
-                    lower(regexp_replace(a."originalFileName",'\\.(mp4|mov|3gp)$','')) AS stem
+                    regexp_replace(lower(a."originalFileName"),'\\.(mp4|mov|3gp)$','') AS stem
              FROM asset a WHERE a."ownerId"IN (SELECT id FROM u) AND a.type='VIDEO'),
     imgs AS (SELECT a.id, a."livePhotoVideoId",
-                    lower(regexp_replace(a."originalFileName",'\\.(jpg|jpeg|heic)$','')) AS stem
+                    regexp_replace(lower(a."originalFileName"),'\\.(jpg|jpeg|heic)$','') AS stem
              FROM asset a WHERE a."ownerId"IN (SELECT id FROM u) AND a.type='IMAGE'),
     pairs AS (SELECT i.id AS img_id, v.id AS vid_id
               FROM imgs i JOIN vids v ON v.stem=i.stem
-              WHERE v.duration<={MAX_MOTION_MS} AND i."livePhotoVideoId" IS NULL)
+              WHERE v.duration<={MAX_MOTION_MS} AND i."livePhotoVideoId" IS NULL
+                -- 1:1 only; duplicate uploads would otherwise pair arbitrarily
+                AND (SELECT count(*) FROM vids v2 WHERE v2.stem=i.stem AND v2.duration<={MAX_MOTION_MS}) = 1
+                AND (SELECT count(*) FROM imgs i2 WHERE i2.stem=v.stem AND i2."livePhotoVideoId" IS NULL) = 1)
     UPDATE asset SET "livePhotoVideoId"=p.vid_id FROM pairs p WHERE asset.id=p.img_id
     RETURNING asset.id;"""
     return update_count(psql(sql), "UPDATE")
@@ -214,8 +222,10 @@ def main(argv: list[str] | None = None) -> int:
     started = time.time()
     linked_stem = linked_id = hidden = 0
     if not args.skip_link:
-        linked_stem = 0 if args.dry_run else link_by_stem(owners)
+        # Private-id matching runs first: a stem match can pair files whose ids
+        # disagree, and those are exactly the pairs apply-pair later refuses.
         linked_id = 0 if args.dry_run else len(link_by_id(owners))
+        linked_stem = 0 if args.dry_run else link_by_stem(owners)
         hidden = 0 if args.dry_run else hide_linked_clips(owners)
 
     rows = pending_merges(owners, args.limit, include_mov=args.include_mov)

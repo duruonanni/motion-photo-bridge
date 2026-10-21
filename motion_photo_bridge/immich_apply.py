@@ -21,12 +21,15 @@ import sys
 import tempfile
 from pathlib import Path
 
+from . import sql
 from . import transcode as tc  # noqa: E402
 from . import vivo  # noqa: E402
 
-MEDIA = Path(os.environ.get("IMMICH_MEDIA_DIR", "/mnt/ztb/media/immich"))
-BACKUP = Path(os.environ.get("MPB_BACKUP_DIR", "/mnt/ztb/immich-backup/vivo-originals"))
-COMPOSE = Path(os.environ.get("IMMICH_COMPOSE_DIR", Path.home() / "hermes-workspace/projects/immich"))
+# No personal defaults: these only make sense for one machine, so they must be
+# set explicitly (see README "Immich 模式").
+MEDIA = Path(os.environ["IMMICH_MEDIA_DIR"]) if os.environ.get("IMMICH_MEDIA_DIR") else None
+BACKUP = Path(os.environ["MPB_BACKUP_DIR"]) if os.environ.get("MPB_BACKUP_DIR") else None
+COMPOSE = Path(os.environ["IMMICH_COMPOSE_DIR"]) if os.environ.get("IMMICH_COMPOSE_DIR") else None
 
 
 def psql(query: str) -> list[list[str]]:
@@ -88,6 +91,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--crf", type=int, default=20)
     args = ap.parse_args(argv)
+    if MEDIA is None or BACKUP is None or COMPOSE is None:
+        raise SystemExit("set IMMICH_MEDIA_DIR, MPB_BACKUP_DIR and IMMICH_COMPOSE_DIR first "
+                         "(they have no portable default — see `mpb doctor --immich`)")
+    args.image_id = sql.uuid(args.image_id, "image id")
 
     rows = psql(f"""SELECT i.id, i."originalFileName", i."originalPath", i."ownerId",
                            v.id, v."originalPath"
@@ -96,6 +103,7 @@ def main(argv: list[str] | None = None) -> int:
     if not rows:
         raise SystemExit("image not found or has no linked video")
     img_id, img_name, img_path, owner, vid_id, vid_path = rows[0]
+    vid_id = sql.uuid(vid_id, "video id")
     img_file, vid_file = host_path(img_path), host_path(vid_path)
 
     print(f"图片: {img_name}  {img_file}")
@@ -109,6 +117,8 @@ def main(argv: list[str] | None = None) -> int:
     # 说明这一对是靠文件名猜的(相册改名/同秒连拍都会踩到),宁可中止也别合并错。
     img_id_tag = vivo.live_photo_id(img_file)
     vid_id_tag = vivo.live_photo_id(vid_file)
+    if vivo.is_motion_photo(img_file):
+        raise SystemExit("图片已经是单文件动态照片,跳过(不需要再合并)")
     print(f"私有 ID: 图片={img_id_tag} 视频={vid_id_tag}")
     if img_id_tag and vid_id_tag and img_id_tag != vid_id_tag:
         raise SystemExit(f"ID 不一致,拒绝合并(图片 {img_id_tag} != 视频 {vid_id_tag})")
@@ -174,19 +184,22 @@ def main(argv: list[str] | None = None) -> int:
         enc_container = f"/data/encoded-video/{owner}/{vid_id[:2]}/{vid_id[2:4]}/{vid_id}-MP.mp4"
         print(f"✅ 视频已复制到 {enc_file}")
 
-        # 6) 更新 DB
+        # 6) 更新 DB —— 四条写库合成一个事务:中途失败不会留下"文件已改、库未改"
         new_duration = int(round(tc.probe(clip).duration * 1000))
-        psql(f"""UPDATE asset SET checksum=decode('{sha1_hex(img_file)}','hex'),
+        psql(f"""BEGIN;
+                 UPDATE asset SET checksum=decode('{sha1_hex(img_file)}','hex'),
                         "updateId"=immich_uuid_v7(), "updatedAt"=now()
-                 WHERE id='{img_id}';""")
-        psql(f"""UPDATE asset_exif SET "fileSizeInByte"={img_file.stat().st_size}
-                 WHERE "assetId"='{img_id}';""")
-        psql(f"""UPDATE asset SET "originalPath"='{enc_container}',
+                 WHERE id='{img_id}';
+                 UPDATE asset_exif SET "fileSizeInByte"={img_file.stat().st_size}
+                 WHERE "assetId"='{img_id}';
+                 UPDATE asset SET "originalPath"='{enc_container}',
                         checksum=decode('{sha1_hex(enc_file)}','hex'),
                         duration={new_duration},
+                        visibility='hidden',
                         "updateId"=immich_uuid_v7(), "updatedAt"=now()
-                 WHERE id='{vid_id}';""")
-        print("✅ 数据库已更新")
+                 WHERE id='{vid_id}';
+                 COMMIT;""")
+        print("✅ 数据库已更新（视频已隐藏，单事务）")
 
     # 7) 删除 upload 下的旧视频(已备份)
     vid_file.unlink(missing_ok=True)

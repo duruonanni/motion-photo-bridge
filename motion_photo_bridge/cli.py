@@ -33,7 +33,8 @@ def _merger_cmd() -> list[str]:
     return [sys.executable, "-m", "motion_photo_bridge._vendor.vivo_motion_photo"]
 
 
-def convert_one(jpg: Path, clip: Path, out_dir: Path, do_transcode: bool, dry_run: bool) -> dict:
+def convert_one(jpg: Path, clip: Path, out_dir: Path, do_transcode: bool, dry_run: bool,
+                overwrite: bool = False) -> dict:
     info = tc.probe(clip)
     result = {
         "image": jpg.name,
@@ -51,6 +52,11 @@ def convert_one(jpg: Path, clip: Path, out_dir: Path, do_transcode: bool, dry_ru
     if dry_run:
         result["ok"] = True
         result["dry_run"] = True
+        return result
+
+    final_path = out_dir / (jpg.stem + ".jpg")
+    if final_path.exists() and not overwrite:
+        result["skipped"] = "output already exists (use --overwrite to redo)"
         return result
 
     with tempfile.TemporaryDirectory(prefix="mpb-") as td:
@@ -83,9 +89,10 @@ def convert_one(jpg: Path, clip: Path, out_dir: Path, do_transcode: bool, dry_ru
         # clip is always staged under the image's stem with an .mp4 suffix.
         shutil.copy2(staged_clip, pair_dir / (jpg.stem + ".mp4"))
 
-        out_dir.mkdir(parents=True, exist_ok=True)
+        merge_out = work / "merged"
+        merge_out.mkdir()
         proc = subprocess.run(
-            _merger_cmd() + ["convert", str(pair_dir), "--output", str(out_dir),
+            _merger_cmd() + ["convert", str(pair_dir), "--output", str(merge_out),
                              "--include-probable", "--json"],
             capture_output=True, text=True,
         )
@@ -103,13 +110,18 @@ def convert_one(jpg: Path, clip: Path, out_dir: Path, do_transcode: bool, dry_ru
         if not result["ok"]:
             result["error"] = (proc.stderr or proc.stdout).strip()[-400:]
 
-    produced = out_dir / (jpg.stem + ".jpg")
-    if produced.exists():
-        result["output"] = str(produced)
-        result["output_mb"] = round(produced.stat().st_size / 1_000_000, 2)
-    else:
-        result["ok"] = False
-        result["error"] = f"no output written: {result.get('reason') or result.get('status') or 'unknown'}"
+        produced = merge_out / (jpg.stem + ".jpg")
+        if produced.exists():
+            # Atomic publish: never leave a half-written file at the destination.
+            out_dir.mkdir(parents=True, exist_ok=True)
+            tmp = final_path.with_suffix(final_path.suffix + ".mpb-tmp")
+            shutil.copy2(produced, tmp)
+            os.replace(tmp, final_path)
+            result["output"] = str(final_path)
+            result["output_mb"] = round(final_path.stat().st_size / 1_000_000, 2)
+        else:
+            result["ok"] = False
+            result["error"] = f"no output written: {result.get('reason') or result.get('status') or 'unknown'}"
     return result
 
 
@@ -143,19 +155,36 @@ def cmd_convert(args) -> int:
             print(f"  skip {item.path.name}: {item.reason}")
         return 1
     out_dir = Path(args.output)
-    ok = skipped_existing = 0
+    if args.flat:
+        seen_names: dict[str, Path] = {}
+        for pair in pairs:
+            target = (pair.image.stem + ".jpg").lower()
+            if target in seen_names:
+                raise SystemExit(
+                    f"--flat would overwrite {pair.image.name}: "
+                    f"{seen_names[target]} and {pair.image} share a name; drop --flat "
+                    f"to keep the source folder structure")
+            seen_names[target] = pair.image
+    ok = 0
+    skipped_existing = skipped_other = 0
     failures: list[tuple[str, str]] = []
     for pair in pairs:
         jpg, clip = pair.image, pair.clip
         relative = jpg.parent.relative_to(Path(args.input))
         target_dir = out_dir if args.flat else out_dir / relative
-        if args.skip_existing and (target_dir / (jpg.stem + ".jpg")).exists():
-            skipped_existing += 1
+        result = convert_one(jpg, clip, target_dir, args.transcode, args.dry_run,
+                             overwrite=args.overwrite)
+        if result.get("skipped"):
+            if "already exists" in result["skipped"]:
+                skipped_existing += 1
+            else:
+                skipped_other += 1
+            if not args.quiet:
+                print(f"SKIP {jpg.name} [{result['skipped']}]")
             continue
-        result = convert_one(jpg, clip, target_dir, args.transcode, args.dry_run)
         ok += bool(result["ok"])
         if not result["ok"]:
-            failures.append((jpg.name, result.get("error") or result.get("skipped") or "unknown"))
+            failures.append((jpg.name, result.get("error") or "unknown"))
         if args.quiet and result["ok"]:
             continue
         status = "OK" if result["ok"] else "FAIL"
@@ -176,8 +205,10 @@ def cmd_convert(args) -> int:
     summary = f"\n{ok}/{total} converted"
     if skipped_existing:
         summary += f" · {skipped_existing} already done"
+    if skipped_other:
+        summary += f" · {skipped_other} skipped (clip too long / not a live photo)"
     if skipped:
-        summary += f" · {len(skipped)} file(s) skipped"
+        summary += f" · {len(skipped)} file(s) ignored"
     print(summary)
     if failures and not args.quiet:
         print("failures:")
@@ -240,7 +271,8 @@ def main(argv: list[str] | None = None) -> int:
     p_conv.add_argument("--dry-run", action="store_true")
     p_conv.add_argument("--include-mov", action="store_true", help="also convert .MOV clips")
     p_conv.add_argument("--flat", action="store_true", help="write every output into one directory")
-    p_conv.add_argument("--skip-existing", action="store_true", help="resume: skip outputs that already exist")
+    p_conv.add_argument("--skip-existing", action="store_true", help=argparse.SUPPRESS)
+    p_conv.add_argument("--overwrite", action="store_true", help="redo files whose output already exists")
     p_conv.add_argument("--quiet", action="store_true", help="print only failures and the summary")
     p_conv.set_defaults(func=cmd_convert)
 

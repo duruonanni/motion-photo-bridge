@@ -9,13 +9,17 @@ import sys
 import time
 from pathlib import Path
 
-COMPOSE = Path(os.environ.get("IMMICH_COMPOSE_DIR", Path.home() / "hermes-workspace/projects/immich"))
+from . import sql
+
+COMPOSE = Path(os.environ["IMMICH_COMPOSE_DIR"]) if os.environ.get("IMMICH_COMPOSE_DIR") else None
 SCRIPT = "-m"
 MODULE = "motion_photo_bridge.immich_apply"
 PY = sys.executable
 
 
 def psql(query: str) -> list[list[str]]:
+    if COMPOSE is None:
+        raise SystemExit("set IMMICH_COMPOSE_DIR (folder with docker-compose.yml) first")
     proc = subprocess.run(
         ["docker", "compose", "exec", "-T", "database", "psql", "-U", "postgres",
          "immich", "-t", "-A", "-F", "|", "-c", query],
@@ -32,7 +36,7 @@ def pending(owner: str) -> list[list[str]]:
         FROM asset i
         JOIN asset v ON v.id = i."livePhotoVideoId"
         JOIN "user" u ON u.id = i."ownerId"
-        WHERE u.email = '{owner}'
+        WHERE u.email = {sql.lit(owner)} 
           AND i."deletedAt" IS NULL
           AND i.type = 'IMAGE'
           AND v."originalPath" NOT LIKE '/data/encoded-video/%'
@@ -42,11 +46,17 @@ def pending(owner: str) -> list[list[str]]:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--owner", default="vivocamera@duruonanni.net")
+    ap.add_argument("--owner", default=os.environ.get("VIVO_OWNER_EMAIL", ""),
+                    help="Immich account email that owns the photos (or set VIVO_OWNER_EMAIL)")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args(argv)
 
+    from . import sql
+
+    if not args.owner:
+        raise SystemExit("pass --owner you@example.com (or set VIVO_OWNER_EMAIL)")
+    args.owner = sql.email(args.owner)
     rows = pending(args.owner)
     if args.limit:
         rows = rows[: args.limit]

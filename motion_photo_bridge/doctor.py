@@ -1,8 +1,12 @@
-"""`mpb doctor` — check everything the pipeline needs before it fails halfway."""
+"""`mpb doctor` — check what the current command actually needs.
+
+Default is offline: Python, ffmpeg, bundled merger, sample conversion.  It never
+looks at an Immich install unless you ask (`--immich`), because most users only
+run `mpb convert`.
+"""
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import shutil
 import subprocess
@@ -22,7 +26,7 @@ def bad(label: str, detail: str = "") -> bool:
 
 def check_python() -> bool:
     if sys.version_info >= (3, 11):
-        return ok("Python", f"{sys.version.split()[0]}")
+        return ok("Python", sys.version.split()[0])
     return bad("Python >= 3.11 required", f"found {sys.version.split()[0]}")
 
 
@@ -31,7 +35,7 @@ def check_ffmpeg() -> bool:
     for tool in ("ffmpeg", "ffprobe"):
         path = shutil.which(tool)
         if not path:
-            good = bad(tool, "not on PATH")
+            good = bad(tool, "not on PATH (install ffmpeg)") and good
             continue
         try:
             version = subprocess.run([tool, "-version"], capture_output=True, text=True, timeout=10).stdout.splitlines()[0]
@@ -47,26 +51,32 @@ def check_merger() -> bool:
         module = importlib.import_module("motion_photo_bridge._vendor.vivo_motion_photo")
     except Exception as exc:  # noqa: BLE001
         return bad("bundled merger", f"cannot import: {exc}")
-    return ok("bundled merger", getattr(module, "__version__", ""))
+    return ok("bundled merger", getattr(module, "__version__", "bundled"))
 
 
-def check_outputs() -> bool:
-    from .immich_apply import BACKUP, MEDIA
+def check_dirs() -> bool:
+    """Only meaningful when the Immich subcommands are in play."""
     good = True
-    for label, path in (("media dir", MEDIA), ("backup dir", BACKUP)):
+    for env, label in (("IMMICH_MEDIA_DIR", "Immich media dir"), ("MPB_BACKUP_DIR", "backup dir")):
+        value = os.environ.get(env)
+        if not value:
+            good = ok(label, f"not set ({env}) — not needed for convert") and good
+            continue
+        path = Path(value)
         parent = path if path.exists() else path.parent
         if parent.exists() and os.access(parent, os.W_OK):
             good = ok(label, str(path)) and good
         else:
-            good = bad(label, f"{path} not writable (set IMMICH_MEDIA_DIR / MPB_BACKUP_DIR)") and good
+            good = bad(label, f"{path} is not writable") and good
     return good
 
 
 def check_immich() -> bool:
-    compose = Path(os.environ.get("IMMICH_COMPOSE_DIR", Path.home() / "hermes-workspace/projects/immich"))
-    url = os.environ.get("IMMICH_URL", "http://localhost:2283")
-    if not (compose / "docker-compose.yml").exists() and not (compose / "compose.yaml").exists():
-        return bad("Immich compose dir", f"{compose} (set IMMICH_COMPOSE_DIR) — only needed for library mode")
+    compose = Path(os.environ["IMMICH_COMPOSE_DIR"]) if os.environ.get("IMMICH_COMPOSE_DIR") else None
+    if compose is None or not any((compose / name).exists()
+                                  for name in ("docker-compose.yml", "docker-compose.yaml",
+                                               "compose.yml", "compose.yaml")):
+        return bad("Immich compose dir", "set IMMICH_COMPOSE_DIR to the folder with docker-compose.yml")
     try:
         proc = subprocess.run(["docker", "compose", "exec", "-T", "database", "psql", "-U", "postgres",
                                "immich", "-t", "-A", "-c", "SELECT count(*) FROM asset;"],
@@ -74,25 +84,26 @@ def check_immich() -> bool:
     except Exception as exc:  # noqa: BLE001
         return bad("Immich database", str(exc)[:80])
     if proc.returncode != 0:
-        return bad("Immich database", proc.stderr.strip().splitlines()[-1][:90] if proc.stderr.strip() else "psql failed")
-    return ok("Immich database", f"{proc.stdout.strip()} assets at {url}")
+        detail = proc.stderr.strip().splitlines()[-1][:90] if proc.stderr.strip() else "psql failed"
+        return bad("Immich database", detail)
+    return ok("Immich database", f"{proc.stdout.strip()} assets")
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="mpb doctor", description="Check the environment before converting anything.")
-    ap.add_argument("--offline", action="store_true", help="skip the Immich/library checks")
-    ap.add_argument("--json", action="store_true", help="machine-readable output")
+    ap.add_argument("--immich", action="store_true", help="also check Immich media paths and the database connection")
+    ap.add_argument("--offline", action="store_true", help="kept for compatibility; offline is now the default")
     args = ap.parse_args(argv)
 
     print("motion-photo-bridge doctor")
     results = [check_python(), check_ffmpeg(), check_merger()]
-    if not args.offline:
-        results += [check_outputs(), check_immich()]
+    if args.immich:
+        results += [check_dirs(), check_immich()]
     print()
     if all(results):
         print("ready — try: mpb scan <folder> && mpb convert <folder> -o <out> --transcode")
         return 0
-    print("some checks failed; offline conversion needs only Python + ffmpeg.")
+    print("something is missing; `mpb convert` needs only Python >= 3.11 + ffmpeg.")
     return 1
 
 

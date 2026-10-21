@@ -13,8 +13,8 @@
 ## 30 秒最快路径（只做离线转换）
 
 ```bash
-pip install "motion-photo-bridge"           # 或 git clone 后 pip install .
-mpb doctor                                  # 检查 ffmpeg / 依赖 / 环境
+pip install "git+https://github.com/duruonanni/motion-photo-bridge"   # PyPI 上架前用这条
+mpb doctor                                  # 只查 Python + ffmpeg + 内置引擎，不碰 Immich
 mpb scan   ~/Pictures/vivo                  # 看看能配出多少对
 mpb convert ~/Pictures/vivo -o ~/Pictures/fixed --transcode
 ```
@@ -132,9 +132,17 @@ python3 -m venv .venv && . .venv/bin/activate
 pip install .
 ```
 
-No git dependency and no extra services: the merger is vendored under
-`motion_photo_bridge/_vendor` (MIT, see `NOTICE.md`), so `pip install` only needs
-PyPI. `ffmpeg` and `ffprobe` must be on `PATH` — `mpb doctor` checks that.
+The merger is vendored under `motion_photo_bridge/_vendor` (MIT, see
+`NOTICE.md`) — there is no second package to install. Until the project is on
+PyPI, `pip install git+…` still needs `git` on the machine; on a machine without
+git, install the wheel from the release:
+
+```bash
+pip install ./motion_photo_bridge-0.2.1-py3-none-any.whl
+```
+
+`ffmpeg` and `ffprobe` must be on `PATH` — `mpb doctor` checks that (and only
+checks Immich when you pass `--immich`).
 
 ## Inspect a file, offline
 
@@ -182,9 +190,17 @@ It is **idempotent and resumable**: a pair whose clip already lives under `encod
 skipped, so you can stop and restart freely. Every pair is backed up first, and rolling back means
 copying the backup over the file again.
 
-These scripts drive Immich through `docker compose exec … psql`, so they expect a local Compose
-deployment. Point them elsewhere with `IMMICH_COMPOSE_DIR`, `IMMICH_MEDIA_DIR` and
-`MPB_BACKUP_DIR`.
+These commands drive Immich through `docker compose exec … psql`, so they expect a local Compose
+deployment and **three environment variables** (no machine-specific defaults are baked in):
+
+```bash
+export IMMICH_COMPOSE_DIR=~/immich            # folder with docker-compose.yml / compose.yaml
+export IMMICH_MEDIA_DIR=~/immich/library      # host path of the upload folder
+export MPB_BACKUP_DIR=~/immich-backup/vivo    # where originals are copied before merging
+mpb doctor --immich                            # verifies the three paths + the database
+```
+
+`apply-pair` is safe to re-run: it refuses to touch a file that is already a single Motion Photo.
 
 Verify a pair afterwards:
 

@@ -21,6 +21,8 @@ VIDEO_EXT_MOV = {".mov"}
 JUNK_DIRS = {"@eadir", "#recycle", ".thumbnails", ".trashes", "__macosx", "$recycle.bin"}
 JUNK_NAMES = {"thumbs.db", "desktop.ini", ".ds_store", "icon\r", ".directory"}
 JUNK_SUFFIX = (".tmp", ".part", ".crdownload", ".download", "~")
+# "IMG_1234 2.jpg" — Synology/qBittorrent style second copy
+_DUP_SPACE = re.compile(r"\s\d+$")
 
 _DUP = re.compile(r"\s*[\(（]\d+[\)）]$")
 _COPY = re.compile(r"^\s*(copy of|副本\s*[-—]?\s*|[-—]\s*副本)\s*", re.I)
@@ -44,7 +46,7 @@ def is_junk(path: Path) -> bool:
     lowered = name.lower()
     if any(part.lower() in JUNK_DIRS for part in path.parts[:-1]):
         return True
-    if lowered in JUNK_NAMES or name.startswith("._"):
+    if lowered in JUNK_NAMES or name.startswith(("._", ".trashed-", ".@__thumb")):
         return True
     return lowered.endswith(JUNK_SUFFIX)
 
@@ -53,6 +55,7 @@ def normalize_stem(name: str) -> str:
     """Undo the renaming a copy or a cloud client adds: ``IMG_1 (1).JPG``."""
     stem = Path(name).stem.strip().lower()
     stem = _DUP.sub("", stem)
+    stem = _DUP_SPACE.sub("", stem)
     stem = _COPY.sub("", stem)
     stem = re.sub(r"\s*[-—]\s*副本$", "", stem)
     return stem.strip()
@@ -124,18 +127,22 @@ def find_pairs(root: str | Path, include_mov: bool = False) -> tuple[list[Pair],
             break
 
     # Pass 2 — normalised filename stem (case, " (1)" copies, "副本" prefixes).
-    img_by_stem: dict[str, list[Path]] = {}
+    # Keyed by (directory, stem): pairing across folders would attach A/IMG_001.jpg
+    # to B/IMG_001.mp4, which is almost never what the user means.  The private
+    # id above is the only signal allowed to cross directories.
+    img_by_stem: dict[tuple[Path, str], list[Path]] = {}
     for image in images:
         if image not in used_images:
-            img_by_stem.setdefault(normalize_stem(image.name), []).append(image)
-    vid_by_stem: dict[str, list[Path]] = {}
+            img_by_stem.setdefault((image.parent, normalize_stem(image.name)), []).append(image)
+    vid_by_stem: dict[tuple[Path, str], list[Path]] = {}
     for video in videos:
         if video not in used_videos:
-            vid_by_stem.setdefault(normalize_stem(video.name), []).append(video)
+            vid_by_stem.setdefault((video.parent, normalize_stem(video.name)), []).append(video)
 
-    for stem in sorted(img_by_stem.keys() & vid_by_stem.keys()):
-        cand_images = [p for p in img_by_stem[stem] if p not in used_images]
-        cand_videos = [p for p in vid_by_stem[stem] if p not in used_videos]
+    for key in sorted(img_by_stem.keys() & vid_by_stem.keys(), key=lambda k: (str(k[0]), k[1])):
+        directory, stem = key
+        cand_images = [p for p in img_by_stem[key] if p not in used_images]
+        cand_videos = [p for p in vid_by_stem[key] if p not in used_videos]
         if not cand_images or not cand_videos:
             continue
         best_image = pick(cand_images, stem)

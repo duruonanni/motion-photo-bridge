@@ -78,3 +78,37 @@ def test_pairs_across_subdirectories_by_private_id(tmp_path: Path) -> None:
     pairs, skipped = pairing.find_pairs(tmp_path)
     assert len(pairs) == 1 and pairs[0].how == "private-id"
     assert skipped == []
+
+
+def test_stem_pairing_stays_inside_one_directory(tmp_path: Path) -> None:
+    (tmp_path / "A").mkdir()
+    (tmp_path / "B").mkdir()
+    (tmp_path / "A" / "IMG_001.jpg").write_bytes(b"\xff\xd8" + b"j" * 40)
+    (tmp_path / "B" / "IMG_001.mp4").write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"m" * 40)
+
+    pairs, skipped = pairing.find_pairs(tmp_path)
+    assert pairs == [], "must not pair across folders without a private id"
+    assert {s.path.name for s in skipped} == {"IMG_001.jpg", "IMG_001.mp4"}
+
+
+def test_skips_trash_and_space_number_copies(tmp_path: Path) -> None:
+    (tmp_path / ".trashed-1699999999-IMG_1.jpg").write_bytes(b"x")
+    (tmp_path / "IMG_1 2.jpg").write_bytes(b"\xff\xd8" + b"j" * 10)
+    (tmp_path / "IMG_1.jpg").write_bytes(b"\xff\xd8" + b"j" * 10)
+    (tmp_path / "IMG_1.mp4").write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"m" * 10)
+
+    pairs, _ = pairing.find_pairs(tmp_path)
+    assert [p.image.name for p in pairs] == ["IMG_1.jpg"]
+
+
+def test_sql_helpers_reject_injection() -> None:
+    from motion_photo_bridge import sql
+
+    assert sql.uuid("1a243d49-73f1-4676-9530-c8b7f3df7db6").startswith("1a24")
+    for bad in ("1; DROP TABLE asset", "", "not-a-uuid"):
+        try:
+            sql.uuid(bad)
+        except SystemExit:
+            continue
+        raise AssertionError(f"uuid() accepted {bad!r}")
+    assert sql.lit("a'b") == "'a''b'"
