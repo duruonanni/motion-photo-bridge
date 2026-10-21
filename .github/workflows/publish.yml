@@ -15,7 +15,34 @@ permissions:
   contents: read
 
 jobs:
+  # Release gate: a tag never publishes untested code.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: Install package
+        run: pip install -e ".[dev]"
+      - name: Unit tests
+        run: python -m pytest -q tests
+      - name: End-to-end on the bundled sample
+        run: |
+          mpb doctor
+          mpb convert docs/sample -o /tmp/out --transcode
+          python - <<'PY'
+          from pathlib import Path
+          from motion_photo_bridge import vivo
+          out = next(Path("/tmp/out").glob("*.jpg"))
+          assert vivo.is_motion_photo(out), "sample did not become a Motion Photo"
+          print("sample ok:", out.name, out.stat().st_size)
+          PY
+
   build:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
