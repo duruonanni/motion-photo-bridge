@@ -34,3 +34,13 @@ ffprobe -v error -show_entries format=format_name:format_tags:stream=codec_name,
 
 ## 5. 对照
 把上述结果和我们 `03-out` 里的产物逐项对比，差异项决定要不要加 `--xiaomi` / `--vivo-new` 之类的输出选项。
+
+## 已确认（无需样张即成立）
+- X300 系列 = 标准单文件 Google Motion Photo；XMP 前缀 vivo 写 `GCamera`
+- 时间戳 `MotionPhotoPresentationTimestampUs` = `0`
+- 三个身份字段：`xmlns:VCamera="http://ns.vivo.com/photos/1.0/camera/"`、
+  `VMotionPhotoVersion=1`、`VMotionPhotoSource=1`、`VMediaKitVersion`
+- Primary 项不带 Length/Padding；MotionPhoto 项带 `Item:Padding="0"`
+- 真机文件另带 C2PA 相机签名（`c2pa.created` + vivo 证书链），第三方无法复制
+- 参考实现（协议事实来源，代码未复制）：live-photo-box `VivoLivePhotoProtocol.cs`、
+  XHS_Downloader_Android `docs/LIVE_PHOTO_COMPATIBILITY.md`

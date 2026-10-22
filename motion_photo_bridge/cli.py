@@ -15,6 +15,7 @@ from . import exif
 from . import pairing
 from . import transcode as tc
 from . import vivo
+from . import vivo_single
 
 MAX_MOTION_SECONDS = 10.0
 
@@ -34,7 +35,7 @@ def _merger_cmd() -> list[str]:
 
 
 def convert_one(jpg: Path, clip: Path, out_dir: Path, do_transcode: bool, dry_run: bool,
-                overwrite: bool = False) -> dict:
+                overwrite: bool = False, target: str = "google") -> dict:
     info = tc.probe(clip)
     result = {
         "image": jpg.name,
@@ -116,6 +117,10 @@ def convert_one(jpg: Path, clip: Path, out_dir: Path, do_transcode: bool, dry_ru
             out_dir.mkdir(parents=True, exist_ok=True)
             tmp = final_path.with_suffix(final_path.suffix + ".mpb-tmp")
             shutil.copy2(produced, tmp)
+            if target == "vivo":
+                # vivo X300 shape: VCamera identity attributes + zero timestamp.
+                tmp.write_bytes(vivo_single.rewrite(tmp.read_bytes()))
+                result["target"] = "vivo"
             os.replace(tmp, final_path)
             result["output"] = str(final_path)
             result["output_mb"] = round(final_path.stat().st_size / 1_000_000, 2)
@@ -173,7 +178,7 @@ def cmd_convert(args) -> int:
         relative = jpg.parent.relative_to(Path(args.input))
         target_dir = out_dir if args.flat else out_dir / relative
         result = convert_one(jpg, clip, target_dir, args.transcode, args.dry_run,
-                             overwrite=args.overwrite)
+                             overwrite=args.overwrite, target=args.target)
         if result.get("skipped"):
             if "already exists" in result["skipped"]:
                 skipped_existing += 1
@@ -274,6 +279,10 @@ def main(argv: list[str] | None = None) -> int:
     p_conv.add_argument("--skip-existing", action="store_true", help=argparse.SUPPRESS)
     p_conv.add_argument("--overwrite", action="store_true", help="redo files whose output already exists")
     p_conv.add_argument("--quiet", action="store_true", help="print only failures and the summary")
+    p_conv.add_argument("--target", choices=("google", "vivo"), default="google",
+                        help="XMP flavour of the output: 'google' (default, plain Motion Photo) or "
+                             "'vivo' (adds the VCamera identity attributes and a zero timestamp that "
+                             "vivo X300 and later write; some apps only treat that shape as a live photo)")
     p_conv.set_defaults(func=cmd_convert)
 
     # Listed for discoverability; dispatched above to their own argparse parsers.

@@ -22,6 +22,21 @@ mpb convert ~/Pictures/vivo -o ~/Pictures/fixed --transcode
 三条命令就够。不用装 Immich、不用 Python 环境以外的任何东西（ffmpeg 除外）。
 **照片来自网盘同步盘、或从手机相册手工拷贝出来，也可以直接跑** —— 见下面「不同来源都能用」。
 
+### 输出成 vivo 原生形态：`--target vivo`
+
+vivo X300 及之后拍的是标准单文件动态照片，只是 XMP 里多了三个 `VCamera` 身份字段、时间戳写 0。
+默认输出是纯 Google 形态（任何遵守规范的阅读器都认）；如果你的目标是**让 App 把它当成厂商原生动态照片**
+（相册之外的平台判定往往更严格），加 `--target vivo` 复刻这个形态：
+
+```bash
+mpb convert ~/Pictures/vivo -o ~/Pictures/fixed --transcode --target vivo
+```
+
+差异只有 XMP：`xmlns:VCamera="http://ns.vivo.com/photos/1.0/camera/"`、
+`VMotionPhotoVersion=1`、`VMotionPhotoSource=1`、`VMediaKitVersion`、时间戳 `0`、Primary 项不带
+Length/Padding。图像像素、EXIF、视频字节都不动。注意：vivo 真机文件还带 C2PA 相机签名，这一层第三方
+无法复制，所以此选项**不保证**平台侧一定认可。
+
 ---
 
 ## 中文说明（先看这个）
