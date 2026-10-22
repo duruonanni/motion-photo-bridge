@@ -339,6 +339,14 @@ does not: an **MPF segment** (APP2 `MPF\0`), an **HDR gain map** (`GainMap` cont
 therefore not "can this file play" but something vendor-specific — treat platform uploads as out
 of scope and share from the phone's gallery instead.
 
+**`--target vivo` still does not survive a Xiaohongshu (小红书) upload.**
+Tested on 2026-10-22: the vivo-shaped output shows the live badge and plays in the Xiaomi
+gallery, but uploading the same file to Xiaohongshu posts a still, while a photo captured by
+that phone uploads fine. Format fidelity is not the gate — the platform decides from capture
+provenance (vivo's real files carry a C2PA signature chain that a third-party tool cannot
+produce) rather than from the XMP. Share from the phone's gallery when a live photo has to
+stay live on a platform; use this tool for Immich.
+
 **Windows plays a black frame (audio only).** The clip is full-range `yuvj420p` and Windows hardware
 decoding chokes on it. `mpb convert --transcode` re-encodes it:
 

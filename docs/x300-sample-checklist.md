@@ -44,3 +44,9 @@ ffprobe -v error -show_entries format=format_name:format_tags:stream=codec_name,
 - 真机文件另带 C2PA 相机签名（`c2pa.created` + vivo 证书链），第三方无法复制
 - 参考实现（协议事实来源，代码未复制）：live-photo-box `VivoLivePhotoProtocol.cs`、
   XHS_Downloader_Android `docs/LIVE_PHOTO_COMPATIBILITY.md`
+
+## 结论（2026-10-22 实测）
+- `--target vivo` 形态：小米相册认（有实况标记、可播放）
+- 小红书仍不认（小米手机上传，仍为静态图；同机直出照片可正常发动态图）
+- 判定：平台侧不看 XMP 形态，看捕获来源（真机文件含 C2PA 签名链，第三方无法生成）
+- 处置：不再投入逆向；发平台用手机相册原图，工具专注 Immich
