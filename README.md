@@ -313,6 +313,17 @@ Consequence, by design: Immich's **Integrity → checksum files** report will li
 `ChecksumFail` (byte hash no longer matches the recorded one). It is only a report — nothing is
 deleted, moved or blocked. Ignore it, or turn that one check off if the noise bothers you.
 
+
+**Xiaomi's gallery recognises a merged file, but Xiaohongshu still posts it as a still.**
+Verified on a Xiaomi 15 (HyperOS 16): the merged JPEG shows the live badge and plays, yet the
+same file uploaded to Xiaohongshu stays static, while a photo taken by the phone uploads fine.
+Byte-level comparison of the two files shows the phone's own capture carries three things ours
+does not: an **MPF segment** (APP2 `MPF\0`), an **HDR gain map** (`GainMap` container item +
+`hdrgm`), and device metadata inside the MP4 (`com.android.manufacturer=Xiaomi`,
+`com.xiaomi.product.marketname`, HEVC instead of our re-encoded H.264). Xiaohongshu's decision is
+therefore not "can this file play" but something vendor-specific — treat platform uploads as out
+of scope and share from the phone's gallery instead.
+
 **Windows plays a black frame (audio only).** The clip is full-range `yuvj420p` and Windows hardware
 decoding chokes on it. `mpb convert --transcode` re-encodes it:
 
