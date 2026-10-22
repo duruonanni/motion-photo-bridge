@@ -34,6 +34,10 @@ OWNER = os.environ.get("VIVO_OWNER_EMAIL", "")  # empty = every owner that has v
 MAX_MOTION_MS = 10_000
 ID_WINDOW_SECONDS = 86_400
 LOCK_FILE = Path(os.environ.get("MPB_LOCK", "/tmp/motion-photo-bridge.auto.lock"))
+# Only recent uploads are scanned: the one-off backfill is done, and a full-table
+# CTE grows with the library until the 120 s docker exec timeout kills the run.
+LOOKBACK_DAYS = int(os.environ.get("MPB_LOOKBACK_DAYS", "14"))
+PSQL_TIMEOUT = int(os.environ.get("MPB_PSQL_TIMEOUT", "300"))
 APPLY_MODULE = "motion_photo_bridge.immich_apply"
 
 
@@ -43,7 +47,7 @@ def psql(query: str) -> list[list[str]]:
     proc = subprocess.run(
         ["docker", "compose", "exec", "-T", "database", "psql", "-U", "postgres",
          "immich", "-t", "-A", "-F", "|", "-c", query],
-        cwd=COMPOSE, capture_output=True, text=True, timeout=120,
+        cwd=COMPOSE, capture_output=True, text=True, timeout=PSQL_TIMEOUT,
     )
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr.strip()[:400])
@@ -85,10 +89,12 @@ def link_by_stem(owners: list[str]) -> int:
     WITH u AS (SELECT id FROM "user" WHERE email IN {sql_owners(owners)}),
     vids AS (SELECT a.id, a.duration,
                     regexp_replace(lower(a."originalFileName"),'\\.(mp4|mov|3gp)$','') AS stem
-             FROM asset a WHERE a."ownerId"IN (SELECT id FROM u) AND a.type='VIDEO'),
+             FROM asset a WHERE a."ownerId"IN (SELECT id FROM u) AND a.type='VIDEO'
+               AND a."fileCreatedAt" > now() - interval '{LOOKBACK_DAYS} days'),
     imgs AS (SELECT a.id, a."livePhotoVideoId",
                     regexp_replace(lower(a."originalFileName"),'\\.(jpg|jpeg|heic)$','') AS stem
-             FROM asset a WHERE a."ownerId"IN (SELECT id FROM u) AND a.type='IMAGE'),
+             FROM asset a WHERE a."ownerId"IN (SELECT id FROM u) AND a.type='IMAGE'
+               AND a."fileCreatedAt" > now() - interval '{LOOKBACK_DAYS} days'),
     pairs AS (SELECT i.id AS img_id, v.id AS vid_id
               FROM imgs i JOIN vids v ON v.stem=i.stem
               WHERE v.duration<={MAX_MOTION_MS} AND i."livePhotoVideoId" IS NULL
